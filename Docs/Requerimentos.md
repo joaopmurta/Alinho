@@ -20,12 +20,12 @@ O sistema será estruturado em um fluxo de navegação contendo 5 áreas princip
 
 ## 3. Requisitos Funcionais (RF)
 
-* **RF01 - Cadastro de Pedido com Origem:** O sistema deve registrar pedidos categorizando sua origem: *Mesa* (com garçom atrelado), *Totem* (cliente interno, garçom automático) ou *Rua* (cliente externo, sem garçom).
+* **RF01 - Cadastro de Pedido com Origem:** O sistema deve registrar pedidos categorizando sua origem: *Casa* (Garçom ou Totem) u *Rua* (cliente externo, sem garçom).
 * **RF02 - Geração de Identificador:** O sistema deve gerar automaticamente um ID sequencial para cada novo pedido registrado no dia.
 * **RF03 - Registro Oculto de Timestamps:** Captura e registro em segundo plano do horário exato em que o pedido transita entre as etapas.
 * **RF04 - Gestão de Status:** Transição lógica dos estados: *Na Fila* -> *Na Churrasqueira* -> *Pronto para Entrega* -> *Finalizado*.
 * **RF05 - Temporizadores Independentes:** Cronômetros distintos na interface para monitorar o tempo gasto nas etapas ativas.
-* **RF06 - Fila Dinâmica (Priorização Automática):** O sistema deve reordenar os pedidos da etapa *Na Fila* aplicando pesos diferentes. Pedidos da *Casa* (Mesa/Totem) possuem multiplicadores maiores de prioridade que pedidos da *Rua*.
+* **RF06 - Fila Dinâmica (Priorização Automática):** O sistema deve reordenar os pedidos da etapa *Na Fila* aplicando pesos diferentes. Pedidos da *Casa* possuem multiplicadores maiores de prioridade que pedidos da *Rua*.
 * **RF07 - Prevenção de Fome (Starvation):** Pedidos da *Rua* que ultrapassarem um limite de tolerância de atraso devem receber um bônus de pontuação crítico para escalar a fila e impedir espera infinita.
 * **RF08 - Alocação Inteligente de Totem:** Para pedidos originados no *Totem*, o sistema deve automaticamente atribuir um garçom ativo no turno. A lógica deve buscar o garçom com menor volume de pedidos em andamento e menor tempo médio de retirada.
 * **RF09 - Estimativa de Capacidade (Grelha):** O sistema deve reconhecer o "tamanho/espaço" de cada tipo de espeto e exibir um indicador visual de capacidade total da churrasqueira, barrando ou alertando sobre superlotação.
