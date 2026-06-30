@@ -1,69 +1,71 @@
-# Esquema de Banco de Dados e Lógica de Relatórios
+# Esquema de Banco de Dados e Lógica Analítica
 
-Este documento detalha a estrutura de armazenamento no SQLite (arquivo único local) e a lógica matemática para a extração de métricas de desempenho e operação da espetaria **Espetô**.
+Este documento detalha a estrutura de armazenamento no SQLite (flat table) e as lógicas matemáticas (heurísticas) para ordenação de filas e extração de métricas operacionais da espetaria **Espetô**.
 
 ---
 
 ## 1. Estrutura do Banco de Dados (SQLite)
 
-O sistema utilizará uma única tabela achatada (*flat table*) para simplificar ao máximo as operações de CRUD, garantindo alta performance e facilidade de manutenção sem a necessidade de chaves estrangeiras complexas para os itens.
+Para manter a alta performance em consultas analíticas e ordenações de fila em tempo real, adotamos o modelo de tabela achatada sem chaves estrangeiras complexas.
 
 ### Tabela: `pedidos`
 
 | Coluna | Tipo SQLite | Descrição |
 | :--- | :--- | :--- |
 | `id_db` | `INTEGER` | Chave primária única universal, autoincrementada (PK). |
-| `id_diario` | `INTEGER` | O número do pedido para o cliente (ex: Pedido 01, 02). Reseta a cada turno. |
+| `id_diario` | `INTEGER` | O número do pedido para o cliente. Reseta a cada turno. |
 | `data_operacao` | `TEXT` | Data do turno aberto (`YYYY-MM-DD`). |
-| `cliente_nome` | `TEXT` | Nome ou apelido do cliente. |
-| `mesa_local` | `TEXT` | Mesa, balcão, ou referência de localização do cliente. |
-| `garcom_nome` | `TEXT` | Nome do garçom responsável pelo pedido. |
+| `cliente_nome` | `TEXT` | Nome, apelido do cliente ou "Totem". |
+| `origem_pedido` | `TEXT` | `mesa`, `totem` ou `rua`. Define a prioridade do algoritmo. |
+| `mesa_local` | `TEXT` | Número da mesa, balcão ou "Para Levar". |
+| `garcom_nome` | `TEXT` | Nome do responsável, preenchido manualmente ou via alocação automática (Totem). `NULL` para pedidos da rua. |
 | `tipo_espeto` | `TEXT` | Sabor/Tipo do espeto (ex: Carne, Frango, Queijo). |
-| `status_atual` | `TEXT` | Estado em tempo real: `fila`, `churrasqueira`, `pronto`, `finalizado`, `cancelado`. |
-| `ts_criado_em` | `TEXT` | Timestamp exato de quando o pedido entrou na Fila (ISO 8601). |
-| `ts_churrasqueira_em` | `TEXT` | Timestamp exato de quando iniciou o preparo na churrasqueira (ISO 8601). |
-| `ts_pronto_em` | `TEXT` | Timestamp exato de quando o espeto foi liberado no balcão (ISO 8601). |
-| `ts_entregue_em` | `TEXT` | Timestamp exato de quando o garçom retirou para entrega (ISO 8601). |
-| `ts_cancelado_em` | `TEXT` | Timestamp de cancelamento, se aplicável (`NULL` por padrão). |
-
-> **Nota Técnica:** Como o SQLite não possui um tipo `DATETIME` nativo, os timestamps serão armazenados como `TEXT` no formato ISO 8601 (`YYYY-MM-DD HH:MM:SS`). Este formato permite a ordenação correta e a utilização de funções de data e hora nativas do SQLite (`julianday` ou `strftime`) para cálculos diretos de diferença de tempo.
+| `espaco_grelha` | `INTEGER` | Representa o volume físico que o espeto ocupa (ex: Queijo = 1, Picanha = 2). |
+| `status_atual` | `TEXT` | `fila`, `churrasqueira`, `pronto`, `finalizado`, `cancelado`. |
+| `ts_criado_em` | `TEXT` | Timestamp exato da entrada do pedido (ISO 8601). |
+| `ts_churrasqueira_em` | `TEXT` | Timestamp do início do preparo térmico (ISO 8601). |
+| `ts_pronto_em` | `TEXT` | Timestamp da liberação no balcão (ISO 8601). |
+| `ts_entregue_em` | `TEXT` | Timestamp da retirada final (ISO 8601). |
 
 ---
 
-## 2. Motor de Relatórios (Lógica e Cálculos)
+## 2. Motor Heurístico e Lógicas de Fila
 
-A extração de métricas baseia-se na subtração matemática dos timestamps registrados de forma automatizada e oculta durante o ciclo de vida de cada pedido finalizado.
+Antes da implementação de modelos preditivos (IA), o sistema operará com equações baseadas em regras e pesos.
 
-### 2.1. Métricas de Tempo por Etapa
+### 2.1. Lógica da Fila Dinâmica (Priorização)
+A tela de pré-churrasqueira ordena os itens em ordem decrescente com base na pontuação dinâmica. A pontuação é recalculada a cada minuto pela interface:
 
+* **Variáveis:**
+  * `Delta_Espera`: (Hora Atual) - `ts_criado_em` (em minutos).
+  * `Peso`: Mesa = 1.0, Totem = 1.0, Rua = 0.6.
+* **Cálculo Base:**
+  $Pontuacao = Delta\_Espera \times Peso$
+* **Escalonamento Crítico (Prevenção de Fome):** Se um pedido da Rua atingir um `Delta_Espera` > 30 minutos, um fator multiplicador agressivo é somado, forçando o pedido a subir para o topo da grelha.
+
+### 2.2. Lógica de Alocação de Garçom (Pedidos do Totem)
+Ao receber um `origem_pedido = 'totem'`, o sistema varre os garçons ativos no turno `data_operacao` e escolhe o ideal (menor score de sobrecarga):
+
+* **Score de Sobrecarga:** $Score = (Pedidos\_Ativos \times 2) + Tempo\_Medio\_Retirada\_Em\_Minutos$
+* O garçom com o **menor Score** é associado automaticamente à coluna `garcom_nome` do novo pedido.
+
+### 2.3. Estimativa de Tempo e Capacidade
+* **Disponibilidade da Churrasqueira:** $Capacidade\_Livre = Capacidade\_Total\_Fisica - \sum espaco\_grelha$ (onde status_atual = 'churrasqueira').
+* **Tempo Estimado (ETA Inicial):** Calculado com base na Média Móvel Simples (SMA) do *Tempo de Preparo (Grelha)* dos últimos 10 espetos idênticos finalizados no dia, somado ao tempo de espera projetado pela Fila Dinâmica.
+
+---
+
+## 3. Relatórios e Métricas de Gestão
+
+A extração de dados ocorre através da subtração dos timestamps. 
+
+### 3.1. Métricas Base de Tempo
 * **Tempo na Fila:** `ts_churrasqueira_em - ts_criado_em`
-  * *Indicador:* Nível de sobrecarga da churrasqueira na absorção de novos pedidos (tempo de espera antes de entrar na grelha).
 * **Tempo de Preparo (Grelha):** `ts_pronto_em - ts_churrasqueira_em`
-  * *Indicador:* Velocidade de cocção/preparo da equipe na churrasqueira, ideal para monitorar a eficiência por tipo de carne.
 * **Tempo de Retirada (Balcão):** `ts_entregue_em - ts_pronto_em`
-  * *Indicador:* Eficiência logística dos garçons em retirar os pedidos prontos da bancada.
-* **Tempo Total (Percepção do Cliente):** `ts_entregue_em - ts_criado_em`
-  * *Indicador:* Qualidade geral do atendimento e tempo de espera final experimentado pelo cliente.
+* **Tempo Total do Cliente:** `ts_entregue_em - ts_criado_em`
 
-### 2.2. Relatórios de Gestão e Painéis
-
-Os agrupamentos e agregações abaixo servem tanto para alimentar a tela de estatísticas dos garçons em tempo real quanto para auditorias históricas com o sistema fechado:
-
-* **Métricas do Painel de Garçons (Turno Atual):**
-  * Para o dia corrente (`data_operacao`), o sistema calcula por `garcom_nome`:
-    * **Pedidos Coletados:** Contagem total de registros do garçom.
-    * **Em Preparo:** Contagem onde `status_atual` está como `fila` ou `churrasqueira`.
-    * **Finalizados:** Contagem onde `status_atual` é `finalizado`.
-    * **Tempo Média de Retirada:** Média calculada (`AVG`) do *Tempo de Retirada (Balcão)* para todos os pedidos concluídos pelo garçom no dia, atualizada instantaneamente a cada entrega.
-
-* **Gargalos de Production por Espeto:**
-  * *Métrica:* Média do **Tempo de Preparo (Grelha)**.
-  * *Agrupamento:* Por `tipo_espeto`. Permite identificar quais produtos demandam mais tempo de fogo.
-
-* **Desempenho de Logística por Garçom (Histórico):**
-  * *Métrica:* Média do **Tempo de Retirada (Balcão)**.
-  * *Agrupamento:* Por `garcom_nome` em períodos selecionados, útil para avaliar a consistência da equipe.
-
-* **Saúde do Turno (Visão Geral):**
-  * *Métrica:* Média do **Tempo Total** e **Tempo na Fila**.
-  * *Agrupamento:* Por blocos de horário (intervalos de 1 hora) com base no `ts_criado_em`, mapeando os picos de estrangulamento do atendimento.
+### 3.2. Agrupamentos Analíticos
+* **Eficiência Logística (Balcão):** Média do *Tempo de Retirada*, agrupado por `garcom_nome`. Utilizado para mapear quem entrega rápido e quem esfria o produto.
+* **Gargalo por Produto:** Média do *Tempo de Preparo*, agrupado por `tipo_espeto`. Variável crucial para alimentar o motor de ETA e eventuais modelos futuros de IA.
+* **Rastreamento de Extravios e Atrasos:** Identificação de outliers onde o `Tempo Total` excede o Desvio Padrão do turno, isolando pedidos perdidos na operação.
